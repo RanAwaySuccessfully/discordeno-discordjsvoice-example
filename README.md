@@ -1,6 +1,10 @@
 # discordeno-discordjsvoice-example
 Discordeno + @discordjs/voice Example
 
+## Discordeno v19 Support
+
+Please check the v19 branch. Once v19 releases, this branch will be renamed to v18 and that one will become the new main branch.
+
 ## How to run
 
 1. Fill the correct token in `token.json`

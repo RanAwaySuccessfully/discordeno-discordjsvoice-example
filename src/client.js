@@ -1,12 +1,8 @@
 import {
     GatewayIntents,
-    createBot,
-    getUser,
-    startBot,
-    sendMessage,
-    stopBot
+    createBot
 } from "discordeno";
-import { promises as fs } from "fs";
+import { appendFile, readFile } from "fs/promises";
 
 import {
     createAudioPlayer,
@@ -14,36 +10,29 @@ import {
     entersState,
     joinVoiceChannel,
     AudioPlayerStatus,
+    EndBehaviorType,
     StreamType,
     VoiceConnectionStatus
 } from "@discordjs/voice";
+import OpusScript from "opusscript";
+
 import { createDiscordenoAdapter } from "./adapter.js";
 
 /* BOT EVENTS */
 
+let bot;
+
 const botEvents = {
     
-    async ready(client, payload) {
+    async ready(payload) {
         console.log(`Logged in at ${ new Date().toISOString() } using shard ${ payload.shardId }`);
 
-        getUser(client, client.id).then(user => console.log(`Logged in as ${ user.username }#${ user.discriminator }`));
+        bot.helpers.getUser(bot.id).then(user => console.log(`Logged in as ${ user.username }#${ user.discriminator }`));
     },
 
-    async voiceServerUpdate(client, payload) {
-        if (client._voiceServerUpdate) {
-            client._voiceServerUpdate(client, payload);
-        }
-    },
-
-    async voiceStateUpdate(client, payload) {
-        if (client._voiceStateUpdate) {
-            client._voiceStateUpdate(client, payload);
-        }
-    },
-
-    async messageCreate(client, message) {
+    async messageCreate(message) {
         if (message.content === "!join") {
-            sendMessage(client, message.channelId, {
+            bot.helpers.sendMessage(message.channelId, {
                 content: `Joining <#${ message.channelId }>.`,
                 allowedMentions: {
                     repliedUser: false
@@ -56,7 +45,8 @@ const botEvents = {
             const connection = joinVoiceChannel({
                 channelId: channelId,
                 guildId: guildId,
-                adapterCreator: createDiscordenoAdapter(client, guildId)
+                adapterCreator: createDiscordenoAdapter(bot, guildId),
+                selfDeaf: true // set to false if receiving audio
             });
 
             const resource = createAudioResource("https://fi.zophar.net/soundfiles/nintendo-64-usf/banjo-kazooie/011b%20Mumbo%27s%20Mountain%20%28Normal%29.mp3", {
@@ -75,37 +65,79 @@ const botEvents = {
 
             entersState(player, AudioPlayerStatus.Playing, 5000);
             connection.subscribe(player);
+
+            // RECEIVE AUDIO EXAMPLE START
+
+            const authorId = message.author.id;
+            const receiver = connection.receiver.subscribe(String(authorId), {
+                end: EndBehaviorType.Manual
+            });
+    
+            const encoder = new OpusScript(48000, 2, OpusScript.Application.AUDIO);
+            
+            receiver.on("data", chunk => {
+                const decoded = encoder.decode(chunk);
+                appendFile("receiver.pcm", decoded);
+                // Signed 16-bit PCM, Little-endian, 2 Channels (Stereo), Sample rate 48000Hz
+            });
+
+            player.on(AudioPlayerStatus.Idle, (oldState, newState) => {
+                receiver.destroy();
+                encoder.delete();
+            });
+
+            // RECEIVE AUDIO EXAMPLE END
+
+            player.on(AudioPlayerStatus.Idle, (oldState, newState) => {
+                connection.destroy();
+            });
         }
     }
 };
 
 /* STARTUP / SHUTDOWN */
 
-let onGracefulExit = () => {
-    process.exit();
-};
-
-process.on("SIGINT", onGracefulExit);
-process.on("SIGTERM", onGracefulExit);
-
 console.log("Started at " + new Date().toISOString());
-fs.readFile("./token.json", "utf-8").then(file => {
+readFile("./token.json", "utf-8").then(file => {
 
     const json = JSON.parse(file);
 
-    const client = createBot({
+    bot = createBot({
 		intents: GatewayIntents.Guilds | GatewayIntents.GuildVoiceStates | GatewayIntents.GuildMessages | GatewayIntents.MessageContent,
 		token: json.token,
-		events: botEvents
+		events: botEvents,
+        desiredProperties: {
+            message: {
+                author: true,
+                channelId: true,
+                content: true,
+                guildId: true,
+                id: true
+            },
+            user: {
+                avatar: true,
+                discriminator: true,
+                id: true,
+                username: true
+            }
+        }
 	});
 
-    startBot(client);
+    bot.start();
 
-    onGracefulExit = async () => {
-        const date = new Date();
-        console.log("Closed at " + date.toISOString());
+    const onGracefulExit = async () => {
+        let date = new Date();
+        console.log("Closing at " + date.toISOString());
     
-        await stopBot(client);
+        if (bot) {
+            await bot.shutdown();
+        }
+
+        date = new Date();
+        console.log("Closed at " + date.toISOString());
         process.exit();
     }
+
+    process.on("SIGINT", onGracefulExit);
+    process.on("SIGTERM", onGracefulExit);
 });

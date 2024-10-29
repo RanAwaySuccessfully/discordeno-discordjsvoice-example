@@ -15,7 +15,7 @@ function trackClient(bot) {
 
 	let cb = bot.events.raw || function(){};
 	
-	bot.events.raw = function (payload) {
+	bot.events.raw = function (payload, shardId) {
 		if (payload.t === "VOICE_SERVER_UPDATE") {
             let adapter = adapters.get(payload.d.guild_id);
 
@@ -33,7 +33,7 @@ function trackClient(bot) {
 			}
 		}
 
-		cb(...arguments);
+		cb(payload, shardId);
 	};
 
 	cb = bot.gateway.events.disconnected || function(){};
@@ -49,7 +49,7 @@ function trackClient(bot) {
 
 		trackedShards.delete(shard.id);
 
-		cb(...arguments);
+		cb(shard);
 	};
 }
 
